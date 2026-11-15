@@ -2021,7 +2021,10 @@ IOReturn RealtekPCICardReaderController::setASPM(bool enable)
         this->parameters.pm.isASPMEnabled = enable;
     }
 
-    if (this->parameters.pm.isASPMEnabled && !enable)
+    // Let the link leave L1 before the chip is used (Linux rtsx_comm_set_aspm waits 10 ms).
+    // v0.9.7 tested the cached state after updating it, so this delay never ran; that did not matter
+    // while ASPM was turned off only once at init, but it does now that the idle state re-enables it.
+    if (retVal == kIOReturnSuccess && !enable)
     {
         IOSleep(10);
     }
@@ -2492,10 +2495,25 @@ void RealtekPCICardReaderController::interruptHandlerGated(IOInterruptEventSourc
     {
         if (pendingInterrupts.contains(BIPR::kSDExists))
         {
-            this->onSDCardInsertedGated();
+            // Debounce the insertion like Linux (rtsx_pci_isr waits 200 ms before running card detect):
+            // the interrupt fires while the card is still sliding in. The timer re-checks the presence.
+            if (this->cardSetupTimer != nullptr)
+            {
+                this->cardSetupTimer->setTimeoutMS(UserConfigs::PCR::CardInsertionDebounce);
+            }
+            else
+            {
+                this->onSDCardInsertedGated();
+            }
         }
         else
         {
+            // A card that was pulled before the debounce delay expired must not be set up
+            if (this->cardSetupTimer != nullptr)
+            {
+                this->cardSetupTimer->cancelTimeout();
+            }
+            
             this->onSDCardRemovedGated();
         }
         

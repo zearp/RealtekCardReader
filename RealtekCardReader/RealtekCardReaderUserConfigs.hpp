@@ -28,6 +28,8 @@ namespace UserConfigs::PCR
     /// Set to `true` (boot argument `-rtsxnoidle`) to keep the card reader in the worker state forever,
     /// i.e. never enable the ASPM when the reader is idle (the behavior of v0.9.7)
     extern bool DisableIdleState;
+    
+    extern UInt32 CardInsertionDebounce;
 }
 
 /// Boot arguments that customize the USB-based card reader controller
