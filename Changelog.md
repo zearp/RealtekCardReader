@@ -1,5 +1,15 @@
 #  Changelog
 
+#### v0.9.8
+- Fixed a kernel panic "Sleep transition timed out" caused by a lost card event completion (the waiter slept forever); the wait is now bounded and the completion is one-shot.
+- Fixed the PCIe capability offsets (Link Control, Device Control 2, L1 substates were read from and written to non-existent addresses).
+- The card reader returns to the idle state (ASPM, LTR, L1 substates) 200 ms after the last request, so the CPU package can reach C6 again. Boot argument `-rtsxnoidle` restores the old behavior.
+- Fixed a kernel panic when a second insertion event arrives while a card is attached.
+- Fixed the fallback from UHS-I to the high speed mode (the bus stays powered off for 100 ms, boot argument `iosdpoweroff`).
+- Card insertions are debounced for 200 ms (boot argument `rtsxdebounce`); a pending insertion is dropped before the system sleeps.
+- The power-management diagnostics (`RTSX Power` property) are only published with the boot argument `-rtsxdiag` or in debug builds.
+- Removed build host paths from the binary.
+
 #### v0.9.7 Beta
 - ~~Fixed an issue that the card is not mounted after the computer wakes up when sleeps with the card inserted.~~
 - Fixed a race condition that may resume the polling thread even though the client requests to pause it.

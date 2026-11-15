@@ -29,7 +29,12 @@ namespace UserConfigs::PCR
     /// i.e. never enable the ASPM when the reader is idle (the behavior of v0.9.7)
     extern bool DisableIdleState;
     
+    /// The amount of time in milliseconds to wait after a card insertion interrupt before the card is set up (boot argument `rtsxdebounce=<ms>`)
     extern UInt32 CardInsertionDebounce;
+    
+    /// Set to `true` (boot argument `-rtsxdiag`, always on in debug builds) to publish the power-management state
+    /// as the "RTSX Power" property of the controller
+    extern bool PowerDiagnostics;
 }
 
 /// Boot arguments that customize the USB-based card reader controller
