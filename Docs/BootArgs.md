@@ -62,6 +62,11 @@ For example, if the name is `rtsxabcd` and the value is `10`, `<Name>=<Value>` b
     - Default Value: `200`
     - Minimum Value: `0`
     - Description: Specify the amount of time in milliseconds to wait after a card insertion interrupt before the card is set up (the interrupt fires while the card is still sliding in; Linux waits 200 ms as well).
+- WakeCardDetectSettle
+    - Boot Argument: `rtsxwakesettle`
+    - Value Type: `UInt32`
+    - Default Value: `250`
+    - Description: The amount of time in milliseconds to wait after the controller is re-initialized on wake before the card presence is read. Some chips (e.g. RTS5227) report the opposite of the slot state right after the re-initialization. `0` disables the delay.
 - DisableIdleState
     - Boot Argument: `-rtsxnoidle`
     - Value Type: `Boolean`
