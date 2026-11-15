@@ -30,6 +30,8 @@ namespace UserConfigs::Card
     
     /// Specify the maximum number of attempts to retry an application command
     extern UInt32 ACMDMaxNumAttempts;
+    
+    extern UInt32 PowerOffDelay;
 }
 
 #endif /* IOSDHostDriverUserConfigs_hpp */

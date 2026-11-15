@@ -25,6 +25,9 @@ namespace UserConfigs::PCR
     
     /// Keep the card reader in the worker state forever (the behavior of v0.9.7)
     bool DisableIdleState = BootArgs::contains("-rtsxnoidle");
+    
+    /// The amount of time in milliseconds to wait after a card insertion interrupt before the card is set up
+    UInt32 CardInsertionDebounce = BootArgs::get("rtsxdebounce", 200);
 }
 
 /// Boot arguments that customize the USB-based card reader controller
