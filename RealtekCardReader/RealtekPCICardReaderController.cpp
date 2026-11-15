@@ -2077,31 +2077,246 @@ IOReturn RealtekPCICardReaderController::setLTRLatency(UInt32 latency)
 ///
 void RealtekPCICardReaderController::enterWorkerState()
 {
-    if (!this->isIdle)
+    auto action = [&]() -> IOReturn
+    {
+        // Keep the idle timer from firing while a request is being processed
+        this->activeRequestCount += 1;
+        
+        if (this->idleTimer != nullptr)
+        {
+            this->idleTimer->cancelTimeout();
+        }
+        
+        if (!this->isIdle)
+        {
+            return kIOReturnSuccess;
+        }
+        
+        pinfo("Entering the worker state...");
+        
+        this->isIdle = false;
+        
+        //psoftassert(this->enableLEDBlinking() == kIOReturnSuccess, "Failed to enable the LED.");
+        
+        psoftassert(this->disableASPM() == kIOReturnSuccess, "Failed to disable the ASPM.");
+        
+        IOSleep(1); // Fix the DMA transfer timeout issue after disabling ASPM on RTS5260
+        
+        if (this->parameters.pm.isLTRModeEnabled)
+        {
+            pinfo("LTR mode is currently enabled. Will adjust the LTR latency.");
+            
+            psoftassert(this->setLTRLatency(this->parameters.pm.ltrActiveLatency) == kIOReturnSuccess, "Failed to adjust the LTR latency.");
+        }
+        
+        if (this->parameters.pm.enableLTRL1SSPowerGate)
+        {
+            psoftassert(this->setL1OffSubConfigD0(true) == kIOReturnSuccess, "Failed to set the active L1 substate.");
+        }
+        
+        return kIOReturnSuccess;
+    };
+    
+    IOCommandGateRunAction(this->commandGate, action);
+}
+
+///
+/// Notify the card reader that the current request has finished
+///
+void RealtekPCICardReaderController::exitWorkerState()
+{
+    auto action = [&]() -> IOReturn
+    {
+        if (this->activeRequestCount > 0)
+        {
+            this->activeRequestCount -= 1;
+        }
+        
+        if (this->activeRequestCount == 0)
+        {
+            this->scheduleIdleState();
+        }
+        
+        return kIOReturnSuccess;
+    };
+    
+    IOCommandGateRunAction(this->commandGate, action);
+}
+
+///
+/// Arm the idle timer
+///
+void RealtekPCICardReaderController::scheduleIdleState()
+{
+    if (this->idleTimer != nullptr && !UserConfigs::PCR::DisableIdleState)
+    {
+        this->idleTimer->setTimeoutMS(kIdleDelayMS);
+    }
+}
+
+///
+/// The idle timer fired
+///
+void RealtekPCICardReaderController::idleTimerFiredGated(IOTimerEventSource* sender)
+{
+    if (this->activeRequestCount != 0)
+    {
+        // A request has started in the meantime and will re-arm the timer when it finishes
+        return;
+    }
+    
+    this->enterIdleStateGated();
+}
+
+///
+/// Notify the card reader to enter the idle state
+///
+void RealtekPCICardReaderController::enterIdleStateGated()
+{
+    if (this->isIdle)
     {
         return;
     }
     
-    pinfo("Entering the worker state...");
+    pinfo("Entering the idle state...");
     
-    this->isIdle = false;
-    
-    //psoftassert(this->enableLEDBlinking() == kIOReturnSuccess, "Failed to enable the LED.");
-    
-    psoftassert(this->disableASPM() == kIOReturnSuccess, "Failed to disable the ASPM.");
-    
-    IOSleep(1); // Fix the DMA transfer timeout issue after disabling ASPM on RTS5260
-    
-    if (this->parameters.pm.isLTRModeEnabled)
-    {
-        pinfo("LTR mode is currently enabled. Will adjust the LTR latency.");
-        
-        psoftassert(this->setLTRLatency(this->parameters.pm.ltrActiveLatency) == kIOReturnSuccess, "Failed to adjust the LTR latency.");
-    }
+    this->isIdle = true;
     
     if (this->parameters.pm.enableLTRL1SSPowerGate)
     {
-        psoftassert(this->setL1OffSubConfigD0(true) == kIOReturnSuccess, "Failed to set the active L1 substate.");
+        psoftassert(this->setL1OffSubConfigD0(false) == kIOReturnSuccess, "Failed to set the idle L1 substate.");
+    }
+    
+    if (this->parameters.pm.isLTRModeEnabled)
+    {
+        psoftassert(this->setLTRLatency(this->parameters.pm.ltrIdleLatency) == kIOReturnSuccess, "Failed to adjust the LTR latency.");
+    }
+    
+    psoftassert(this->enableASPM() == kIOReturnSuccess, "Failed to enable the ASPM.");
+
+    pmesg("The card reader has entered the idle state (ASPM enabled: %s).", YESNO(this->parameters.pm.isASPMEnabled));
+    
+    this->idleEntryCount += 1;
+    
+    this->publishPowerDiagnostics("idle");
+}
+
+///
+/// Publish the power-management state to the I/O Registry (read with `ioreg -rn <controller> -l | grep "RTSX Power"`)
+///
+void RealtekPCICardReaderController::publishPowerDiagnostics(const char* reason)
+{
+    using namespace RTSX::PCR::Chip;
+    
+    UInt8 afctl = 0xFF;
+    
+    psoftassert(this->readChipRegister(rAFCTL, afctl) == kIOReturnSuccess, "Failed to read AFCTL.");
+    
+    UInt8 petxcfg = 0xFF;
+    
+    psoftassert(this->readChipRegister(rPETXCFG, petxcfg) == kIOReturnSuccess, "Failed to read PETXCFG.");
+    
+    OSDictionary* dict = OSDictionary::withCapacity(10);
+    
+    if (dict == nullptr)
+    {
+        return;
+    }
+    
+    auto putBool = [&](const char* key, bool value) { dict->setObject(key, value ? kOSBooleanTrue : kOSBooleanFalse); };
+    
+    auto putNumber = [&](const char* key, UInt64 value)
+    {
+        OSNumber* number = OSNumber::withNumber(value, 32);
+        
+        if (number != nullptr)
+        {
+            dict->setObject(key, number);
+            
+            number->release();
+        }
+    };
+    
+    OSString* string = OSString::withCString(reason);
+    
+    if (string != nullptr)
+    {
+        dict->setObject("LastEvent", string);
+        
+        string->release();
+    }
+    
+    putBool("ASPML1AllowedByFirmware", this->parameters.pm.isASPML1Enabled);
+    putBool("ASPMEnabledCached", this->parameters.pm.isASPMEnabled);
+    putBool("ASPMEnabledReadback", this->isASPMEnabled());
+    putNumber("AFCTL", afctl);
+    putNumber("PETXCFG", petxcfg);
+    putNumber("LNKCTL", IOPCIeDeviceConfigRead16(this->device, PCI_EXP_LNKCTL));
+    putNumber("DEVCTL2", IOPCIeDeviceConfigRead16(this->device, PCI_EXP_DEVCTL2));
+    {
+        IOByteCount l1ss = 0;
+        
+        if (this->device->extendedFindPCICapability(static_cast<UInt32>(kIOPCIExpressCapabilityIDL1PMSubstates), &l1ss) != 0 && l1ss != 0)
+        {
+            putNumber("L1SSCTL1", this->device->extendedConfigRead32(l1ss + 0x08));
+        }
+    }
+    putBool("ForceClockRequestByL1SS", this->parameters.pm.forceClockRequest);
+    putBool("ClockRequestForced", (petxcfg & PETXCFT::kForceClockRequestDelinkMask) != 0);
+    putBool("Idle", this->isIdle);
+    putNumber("ActiveRequests", this->activeRequestCount);
+    putNumber("IdleEntries", this->idleEntryCount);
+    putBool("LTRModeEnabled", this->parameters.pm.isLTRModeEnabled);
+    putBool("LTRL1SSPowerGate", this->parameters.pm.enableLTRL1SSPowerGate);
+    putBool("IdleStateDisabledByBootArg", UserConfigs::PCR::DisableIdleState);
+    
+    this->setProperty("RTSX Power", dict);
+    
+    dict->release();
+}
+
+///
+/// Create the idle timer
+///
+bool RealtekPCICardReaderController::setupIdleTimer()
+{
+    auto handler = OSMemberFunctionCast(IOTimerEventSource::Action, this, &RealtekPCICardReaderController::idleTimerFiredGated);
+    
+    this->idleTimer = IOTimerEventSource::timerEventSource(this, handler);
+    
+    if (this->idleTimer == nullptr)
+    {
+        perr("Failed to create the idle timer.");
+        
+        return false;
+    }
+    
+    if (this->workLoop->addEventSource(this->idleTimer) != kIOReturnSuccess)
+    {
+        perr("Failed to add the idle timer to the workloop.");
+        
+        OSSafeReleaseNULL(this->idleTimer);
+        
+        return false;
+    }
+    
+    return true;
+}
+
+///
+/// Destroy the idle timer
+///
+void RealtekPCICardReaderController::destroyIdleTimer()
+{
+    if (this->idleTimer != nullptr)
+    {
+        this->idleTimer->cancelTimeout();
+        
+        this->workLoop->removeEventSource(this->idleTimer);
+        
+        this->idleTimer->release();
+        
+        this->idleTimer = nullptr;
     }
 }
 
@@ -2130,6 +2345,12 @@ bool RealtekPCICardReaderController::shouldEnableClockPowerManagement()
 void RealtekPCICardReaderController::prepareToSleep()
 {
     pinfo("Prepare to sleep...");
+    
+    // The chip is about to be powered down; the idle timer must not touch it
+    if (this->idleTimer != nullptr)
+    {
+        this->idleTimer->cancelTimeout();
+    }
     
     // Detach the card if present
     super::prepareToSleep();
@@ -2420,6 +2641,8 @@ IOReturn RealtekPCICardReaderController::optimizePhys()
 ///
 IOReturn RealtekPCICardReaderController::initHardwareCommon()
 {
+
+
     pinfo("Initializing the card reader...");
     
     // Enable the bus interrupt
@@ -2461,7 +2684,11 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
     pinfo("SSC has been powered on.")
     
     // Disable the ASPM during the initialization
+    // The chip may have lost its state (e.g. after a sleep), so refresh the cached state first
+    this->parameters.pm.isASPMEnabled = this->isASPMEnabled();
+    
     psoftassert(this->disableASPM() == kIOReturnSuccess, "Failed to disable the ASPM.");
+
     
     // Optimize the physical layer
     retVal = this->optimizePhys();
@@ -2472,6 +2699,7 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
         
         return retVal;
     }
+
     
     // Configure the card reader
     pinfo("Configuring the card reader chip...");
@@ -2528,6 +2756,7 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
         
         return retVal;
     }
+
     
     pinfo("The card reader chip has been configured.");
     
@@ -2565,7 +2794,8 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
     
     // Enter L1 when the host is idle
     // TODO: CHECK THIS
-    this->device->configWrite8(0x70F, 0x5B);
+    this->device->extendedConfigWrite8(0x70F, 0x5B);
+
     
     // Perform device-specific initialization
     retVal = this->initHardwareExtra();
@@ -2576,6 +2806,7 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
         
         return retVal;
     }
+
     
     // Configure the ASPM
     // TODO: CHECK THIS
@@ -2587,8 +2818,17 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
         
         return retVal;
     }
+
     
     pinfo("Initialized the card reader...");
+    
+    // The chip is now in the active posture (ASPM forced off); let it return to the idle state
+    // once nothing happens, otherwise the PCIe link never enters L1 and the CPU package cannot reach C6
+    this->isIdle = false;
+    
+    this->scheduleIdleState();
+    
+    this->publishPowerDiagnostics("init");
     
     return kIOReturnSuccess;
 }
@@ -3048,6 +3288,12 @@ bool RealtekPCICardReaderController::init(OSDictionary* dictionary)
     
     this->cardSetupTimer = nullptr;
     
+    this->idleTimer = nullptr;
+    
+    this->activeRequestCount = 0;
+    
+    this->idleEntryCount = 0;
+    
     this->dmaCommandPool = nullptr;
     
     this->hostBufferDMACommand = nullptr;
@@ -3122,6 +3368,7 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         return false;
     }
+
     
     this->device->retain();
     
@@ -3136,6 +3383,7 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         goto error1;
     }
+
     
     // Set up the hardware interrupt
     if (!this->setupInterrupts())
@@ -3144,6 +3392,7 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         goto error2;
     }
+
     
     // Set up the host buffer
     if (!this->setupHostBuffer())
@@ -3152,6 +3401,15 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         goto error3;
     }
+    
+    // Set up the timer that returns the card reader to the idle state
+    if (!this->setupIdleTimer())
+    {
+        perr("Failed to set up the idle timer.");
+        
+        goto error4;
+    }
+
     
     // Fetch the current ASPM state
     this->parameters.pm.isASPMEnabled = this->isASPMEnabled();
@@ -3165,6 +3423,7 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         goto error4;
     }
+
     
     // Initialize the host UHS-I capabilities
     this->uhsCaps.sdr104 = this->parameters.caps.supportsSDSDR104;
@@ -3202,6 +3461,8 @@ bool RealtekPCICardReaderController::start(IOService* provider)
     return true;
     
 error4:
+    this->destroyIdleTimer();
+    
     this->tearDownHostBuffer();
     
 error3:
@@ -3232,6 +3493,8 @@ error1:
 void RealtekPCICardReaderController::stop(IOService* provider)
 {
     pinfo("Stopping the card reader controller...");
+    
+    this->destroyIdleTimer();
     
     this->destroyCardInitTimer();
     

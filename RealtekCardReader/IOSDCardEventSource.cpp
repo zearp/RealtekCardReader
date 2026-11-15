@@ -8,6 +8,7 @@
 #include "IOSDCardEventSource.hpp"
 
 #include "Debug.hpp"
+#include "Utilities.hpp"
 
 //
 // MARK: - Meta Class Definitions
@@ -31,8 +32,22 @@ bool IOSDCardEventSource::checkForWork()
         return false;
     }
     
+    // Take the completion and the options under the lock so that the thread that raises the event
+    // can neither replace them nor reset them while the action is running.
+    // The completion is one-shot: A stale completion (that points to the stack of a caller
+    // that has long returned) must never be invoked by a later event.
+    IOSDCard::Completion completion;
+    
+    completion.reset();
+    
+    IOSDCard::EventOptions options;
+    
+    IOLockLock(this->lock);
+    
     if (!this->enabled)
     {
+        IOLockUnlock(this->lock);
+        
         pinfo("The event source is disabled.");
         
         return false;
@@ -41,9 +56,17 @@ bool IOSDCardEventSource::checkForWork()
     // Acknowledge the card event
     super::disable();
     
+    completion = this->completion;
+    
+    options = this->options;
+    
+    this->completion.reset();
+    
+    IOLockUnlock(this->lock);
+    
     pinfo("Processing the card event...");
     
-    (*reinterpret_cast<Action>(this->action))(this->owner, &this->completion, this->options);
+    (*reinterpret_cast<Action>(this->action))(this->owner, &completion, options);
     
     pinfo("The card event has been processed.");
     
@@ -55,10 +78,13 @@ bool IOSDCardEventSource::checkForWork()
 ///
 /// @param completion A nullable completion routine to be invoked when the card event has been processed
 /// @param options An optional value passed to the host driver
+/// @note The completion and the options are stored *before* the event source is signaled.
+///       Otherwise the processor work loop may run the action with a missing completion
+///       and the synchronous caller would wait forever.
 ///
 void IOSDCardEventSource::enable(IOSDCard::Completion* completion, IOSDCard::EventOptions options)
 {
-    super::enable();
+    IOLockLock(this->lock);
     
     if (completion != nullptr)
     {
@@ -66,16 +92,48 @@ void IOSDCardEventSource::enable(IOSDCard::Completion* completion, IOSDCard::Eve
     }
     
     this->options = options;
+    
+    // Mark the source as enabled while holding the lock; this signals the work loop
+    super::enable();
+    
+#ifdef RTSX_FAULT_INJECTION
+    // Test only: widen the window in which the processor work loop could observe the event source
+    // (boot argument `rtsxfaultms=<ms>`). Harmless here because the completion is already stored.
+    IOSleep(BootArgs::get("rtsxfaultms", 100));
+#endif
+    
+    IOLockUnlock(this->lock);
 }
 
 ///
 /// Disable the event source
 ///
+/// @note A completion that is waiting to be processed is dropped; a completion that is being processed is not affected.
+///
 void IOSDCardEventSource::disable()
 {
+    IOLockLock(this->lock);
+    
     super::disable();
     
     this->completion.reset();
+    
+    IOLockUnlock(this->lock);
+}
+
+///
+/// Release the lock
+///
+void IOSDCardEventSource::free()
+{
+    if (this->lock != nullptr)
+    {
+        IOLockFree(this->lock);
+        
+        this->lock = nullptr;
+    }
+    
+    super::free();
 }
 
 ///
@@ -102,6 +160,15 @@ IOSDCardEventSource* IOSDCardEventSource::createWithAction(OSObject* owner, Acti
     }
     
     if (!instance->init(owner, reinterpret_cast<IOEventSource::Action>(action)))
+    {
+        instance->release();
+        
+        return nullptr;
+    }
+    
+    instance->lock = IOLockAlloc();
+    
+    if (instance->lock == nullptr)
     {
         instance->release();
         

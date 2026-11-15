@@ -25,6 +25,13 @@ class IOSDCardEventSource: public IOEventSource
     /// An optional value passed to the event handler
     IOSDCard::EventOptions options;
     
+    /// Protects `completion`, `options` and the enabled state against concurrent access
+    /// by the thread that raises the event and the thread that processes it
+    IOLock* lock;
+    
+    /// Release the lock
+    void free() override;
+    
     ///
     /// Check whether an action needs to perform to handle the card event
     ///
