@@ -300,7 +300,9 @@ public:
             }
             else
             {
-                pwarning("The action routine is null.");
+                // A caller that does not need the result raises the event without a completion (e.g. the eject request from
+                // the storage stack); that is a valid case, not a warning (debug builds still log it)
+                pinfo("No completion routine was supplied for this card event.");
             }
         }
         

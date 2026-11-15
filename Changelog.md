@@ -1,5 +1,11 @@
 #  Changelog
 
+#### Unreleased
+- Fixed a kernel panic when a block request is serviced before the card is attached (e.g. right after a wake or at shutdown): requests wait for the pending insertion event, and fail with `kIOReturnNoMedia` if no card is attached.
+- Pending block requests that are dropped (card removed) are now completed with an error; v0.9.7 returned them to the pool without a completion, so the caller waited forever. A request submitted for a removed card is never serviced on the next card.
+- Wait 250 ms after the controller is re-initialized on wake before reading the card presence (boot argument `rtsxwakesettle`).
+- Based on the report and patch in 0xFireWolf/RealtekCardReader#62.
+
 #### v0.9.8
 - Fixed a kernel panic "Sleep transition timed out" caused by a lost card event completion (the waiter slept forever); the wait is now bounded and the completion is one-shot.
 - Fixed the PCIe capability offsets (Link Control, Device Control 2, L1 substates were read from and written to non-existent addresses).

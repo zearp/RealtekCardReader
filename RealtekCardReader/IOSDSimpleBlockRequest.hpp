@@ -84,6 +84,8 @@ public:
     ///
     /// @note This function is invoked by the processor work loop to fully service the request.
     ///
+    void cancel(IOReturn status) override;
+
     void service() override;
     
     ///

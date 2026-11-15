@@ -2417,6 +2417,15 @@ void RealtekPCICardReaderController::prepareToWakeUp()
     // Initialize the hardware
     if (this->initHardwareCommon() == kIOReturnSuccess)
     {
+        // Let the card detect bit settle before `super::prepareToWakeUp()` reads it: right after the re-initialization
+        // some chips report the opposite of the slot state (reported on an RTS5227: a card in the slot read as absent,
+        // an empty slot as present, correct after < 200 ms). A wrong reading would detach a mounted card or attach a
+        // card that is not there. Boot argument `rtsxwakesettle=<ms>`, 0 disables the delay.
+        if (UserConfigs::PCR::WakeCardDetectSettle != 0)
+        {
+            IOSleep(UserConfigs::PCR::WakeCardDetectSettle);
+        }
+        
         // Attach the card if present
         super::prepareToWakeUp();
         
