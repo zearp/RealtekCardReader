@@ -406,8 +406,6 @@ class RealtekPCICardReaderController: public RealtekCardReaderController
     /// Publish the power-management state to the I/O Registry as "RTSX Power" (diagnostics)
     void publishPowerDiagnostics(const char* reason);
     
-    
-    
     //
     // MARK: - Host Command & Data Buffer
     //
@@ -1969,7 +1967,6 @@ public:
     /// @return `true` on success, `false` otherwise.
     ///
     bool start(IOService* provider) override final;
-    
     
     ///
     /// Stop the controller

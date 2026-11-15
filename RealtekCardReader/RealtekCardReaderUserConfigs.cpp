@@ -28,6 +28,13 @@ namespace UserConfigs::PCR
     
     /// The amount of time in milliseconds to wait after a card insertion interrupt before the card is set up
     UInt32 CardInsertionDebounce = BootArgs::get("rtsxdebounce", 200);
+    
+    /// Publish the power-management state ("RTSX Power") to the I/O Registry; always on in debug builds
+#ifdef DEBUG
+    bool PowerDiagnostics = true;
+#else
+    bool PowerDiagnostics = BootArgs::contains("-rtsxdiag");
+#endif
 }
 
 /// Boot arguments that customize the USB-based card reader controller

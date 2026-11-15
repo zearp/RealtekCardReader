@@ -2196,8 +2196,8 @@ void RealtekPCICardReaderController::enterIdleStateGated()
     }
     
     psoftassert(this->enableASPM() == kIOReturnSuccess, "Failed to enable the ASPM.");
-
-    pmesg("The card reader has entered the idle state (ASPM enabled: %s).", YESNO(this->parameters.pm.isASPMEnabled));
+    
+    pinfo("The card reader has entered the idle state (ASPM enabled: %s).", YESNO(this->parameters.pm.isASPMEnabled));
     
     this->idleEntryCount += 1;
     
@@ -2207,9 +2207,20 @@ void RealtekPCICardReaderController::enterIdleStateGated()
 ///
 /// Publish the power-management state to the I/O Registry (read with `ioreg -rn <controller> -l | grep "RTSX Power"`)
 ///
+/// @note Diagnostics only: off unless the boot argument `-rtsxdiag` is given or the kext is a debug build.
+///       It reads chip registers (which wakes the link right after the idle state has enabled the ASPM)
+///       and allocates a dictionary on every idle entry, so it is not something a release build should do by default.
+///
 void RealtekPCICardReaderController::publishPowerDiagnostics(const char* reason)
 {
     using namespace RTSX::PCR::Chip;
+    
+    if (!UserConfigs::PCR::PowerDiagnostics)
+    {
+        return;
+    }
+    
+    pmesg("Power diagnostics (%s): idle entries = %u.", reason, this->idleEntryCount);
     
     UInt8 afctl = 0xFF;
     
@@ -2353,6 +2364,13 @@ void RealtekPCICardReaderController::prepareToSleep()
     if (this->idleTimer != nullptr)
     {
         this->idleTimer->cancelTimeout();
+    }
+    
+    // Drop a pending (debounced) insertion as well: it would otherwise fire after the wake-up
+    // on top of the card detection that `prepareToWakeUp()` performs anyway
+    if (this->cardSetupTimer != nullptr)
+    {
+        this->cardSetupTimer->cancelTimeout();
     }
     
     // Detach the card if present
@@ -2659,8 +2677,6 @@ IOReturn RealtekPCICardReaderController::optimizePhys()
 ///
 IOReturn RealtekPCICardReaderController::initHardwareCommon()
 {
-
-
     pinfo("Initializing the card reader...");
     
     // Enable the bus interrupt
@@ -2706,7 +2722,6 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
     this->parameters.pm.isASPMEnabled = this->isASPMEnabled();
     
     psoftassert(this->disableASPM() == kIOReturnSuccess, "Failed to disable the ASPM.");
-
     
     // Optimize the physical layer
     retVal = this->optimizePhys();
@@ -2717,7 +2732,6 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
         
         return retVal;
     }
-
     
     // Configure the card reader
     pinfo("Configuring the card reader chip...");
@@ -2774,7 +2788,6 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
         
         return retVal;
     }
-
     
     pinfo("The card reader chip has been configured.");
     
@@ -2824,7 +2837,6 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
         
         return retVal;
     }
-
     
     // Configure the ASPM
     // TODO: CHECK THIS
@@ -2836,7 +2848,6 @@ IOReturn RealtekPCICardReaderController::initHardwareCommon()
         
         return retVal;
     }
-
     
     pinfo("Initialized the card reader...");
     
@@ -3386,7 +3397,6 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         return false;
     }
-
     
     this->device->retain();
     
@@ -3401,7 +3411,6 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         goto error1;
     }
-
     
     // Set up the hardware interrupt
     if (!this->setupInterrupts())
@@ -3410,7 +3419,6 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         goto error2;
     }
-
     
     // Set up the host buffer
     if (!this->setupHostBuffer())
@@ -3427,7 +3435,6 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         goto error4;
     }
-
     
     // Fetch the current ASPM state
     this->parameters.pm.isASPMEnabled = this->isASPMEnabled();
@@ -3441,7 +3448,6 @@ bool RealtekPCICardReaderController::start(IOService* provider)
         
         goto error4;
     }
-
     
     // Initialize the host UHS-I capabilities
     this->uhsCaps.sdr104 = this->parameters.caps.supportsSDSDR104;
