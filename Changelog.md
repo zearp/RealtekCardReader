@@ -5,8 +5,6 @@
 - Pending block requests that are dropped (card removed) are now completed with an error; v0.9.7 returned them to the pool without a completion, so the caller waited forever. A request submitted for a removed card is never serviced on the next card.
 - Wait 250 ms after the controller is re-initialized on wake before reading the card presence (boot argument `rtsxwakesettle`).
 - Based on the report and patch in 0xFireWolf/RealtekCardReader#62.
-
-#### v0.9.8
 - Fixed a kernel panic "Sleep transition timed out" caused by a lost card event completion (the waiter slept forever); the wait is now bounded and the completion is one-shot.
 - Fixed the PCIe capability offsets (Link Control, Device Control 2, L1 substates were read from and written to non-existent addresses).
 - The card reader returns to the idle state (ASPM, LTR, L1 substates) 200 ms after the last request, so the CPU package can reach C6 again. Boot argument `-rtsxnoidle` restores the old behavior.
