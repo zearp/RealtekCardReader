@@ -309,6 +309,14 @@ public:
         ///
         /// Reset the completion routine
         ///
+        ///
+        /// Check whether a completion routine has been supplied
+        ///
+        inline bool isSet() const
+        {
+            return this->action != nullptr;
+        }
+        
         inline void reset()
         {
             this->target = nullptr;

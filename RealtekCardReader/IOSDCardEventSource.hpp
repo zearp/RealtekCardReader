@@ -62,6 +62,14 @@ public:
     ///
     void disable() override;
     
+private:
+    ///
+    /// [Helper] Complete a completion that will never be processed with `kIOReturnAborted`
+    ///
+    void abortDroppedCompletion(IOSDCard::Completion& completion);
+    
+public:
+    
     ///
     /// Create a card event source with the given action
     ///

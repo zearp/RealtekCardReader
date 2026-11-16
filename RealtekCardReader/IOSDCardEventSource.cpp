@@ -84,10 +84,20 @@ bool IOSDCardEventSource::checkForWork()
 ///
 void IOSDCardEventSource::enable(IOSDCard::Completion* completion, IOSDCard::EventOptions options)
 {
+    // A completion that is still waiting and gets replaced by this event (see `abortDroppedCompletion()`)
+    IOSDCard::Completion dropped;
+    
+    dropped.reset();
+    
     IOLockLock(this->lock);
     
     if (completion != nullptr)
     {
+        if (this->completion.isSet())
+        {
+            dropped = this->completion;
+        }
+        
         this->completion = *completion;
     }
     
@@ -103,22 +113,54 @@ void IOSDCardEventSource::enable(IOSDCard::Completion* completion, IOSDCard::Eve
 #endif
     
     IOLockUnlock(this->lock);
+    
+    this->abortDroppedCompletion(dropped);
 }
 
 ///
 /// Disable the event source
 ///
-/// @note A completion that is waiting to be processed is dropped; a completion that is being processed is not affected.
+/// @note A completion that is waiting to be processed is completed with `kIOReturnAborted` (see `abortDroppedCompletion()`);
+///       a completion that is being processed is not affected.
 ///
 void IOSDCardEventSource::disable()
 {
+    IOSDCard::Completion dropped;
+    
+    dropped.reset();
+    
     IOLockLock(this->lock);
     
     super::disable();
     
+    dropped = this->completion;
+    
     this->completion.reset();
     
     IOLockUnlock(this->lock);
+    
+    this->abortDroppedCompletion(dropped);
+}
+
+///
+/// [Helper] Complete a completion that will never be processed
+///
+/// @param completion The completion taken out of the event source (may be unset)
+/// @note v0.9.7 discarded it. If it belonged to a synchronous waiter (the sleep/wake path), the waiter ran into its
+///       timeout and its context was never freed. Completing it with `kIOReturnAborted` ends the wait at once and
+///       releases the context; the completion is called exactly once because it has already been removed from the source.
+///       Called without the lock held, since the completion may take the controller's gate.
+///
+void IOSDCardEventSource::abortDroppedCompletion(IOSDCard::Completion& completion)
+{
+    if (!completion.isSet())
+    {
+        return;
+    }
+    
+    pinfo("A pending card event has been dropped. Its completion is invoked with kIOReturnAborted.");
+    
+    completion.invoke(kIOReturnAborted, nullptr);
 }
 
 ///

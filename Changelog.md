@@ -1,6 +1,8 @@
 #  Changelog
 
 #### Unreleased
+- Fixed a lost wakeup in the synchronous card event wait (sleep/wake path): the completion now publishes the result and wakes the waiter under the command gate. Before, a completion that ran between the waiter's check and its sleep was lost and the waiter returned only at its deadline (10 s longer sleep, 30 s stall on wake).
+- A card event completion that is dropped (the opposite event arrived first) or replaced (a second event of the same kind) is completed with `kIOReturnAborted` instead of being discarded, so a synchronous waiter returns at once and its context is freed.
 - Fixed a kernel panic when a block request is serviced before the card is attached (e.g. right after a wake or at shutdown): requests wait for the pending insertion event, and fail with `kIOReturnNoMedia` if no card is attached.
 - Pending block requests that are dropped (card removed) are now completed with an error; v0.9.7 returned them to the pool without a completion, so the caller waited forever. A request submitted for a removed card is never serviced on the next card.
 - Wait 250 ms after the controller is re-initialized on wake before reading the card presence (boot argument `rtsxwakesettle`).
