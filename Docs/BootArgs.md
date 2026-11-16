@@ -48,6 +48,11 @@ For example, if the name is `rtsxabcd` and the value is `10`, `<Name>=<Value>` b
     - Default Value: `100`
     - Minimum Value: `1`
     - Description: Specify the amount of time in milliseconds the bus stays powered off before the card is powered on again. A card that has switched to 1.8V signaling only returns to 3.3V once its supply has fully discharged; with a shorter delay the retry at a lower speed mode fails. (v0.9.7 used 1 ms.)
+- UseLegacyCardCharacteristicsDictionary
+    - Boot Argument: `-iosdlccd`
+    - Value Type: `Boolean`
+    - Default Value: `false`
+    - Description: Add this boot argument to use the legacy format of the card characteristics dictionary. Apple has changed the format of the card characteristics dictionary in macOS Sonoma 14.4, so users see an error message like "There was an error loading card reader information" when they click "Card Reader" in System Information.app. Use this boot argument if you use this driver on earlier macOS versions.
 
 ### PCIe-based Card Reader Specific
 - DelayCardInitAtBoot
@@ -98,4 +103,4 @@ For example, if the name is `rtsxabcd` and the value is `10`, `<Name>=<Value>` b
     - Value Type: `UInt32`
     - Default Value: `10`
     - Minimum Value: `1`
-    - Description: Specify the amount of time in milliseconds to wait until the SSC clock becomes stable. If the value is too small, commands may timeout after the driver switches the card clock. Increase this value if you find that the driver fails to enable the 4-bit bus in the kernel log.
+    - Description: Specify the amount of time in milliseconds to wait until the SSC clock becomes stable. If the value is too small, commands may time out after the driver switches the card clock. Increase this value if you find that the driver fails to enable the 4-bit bus in the kernel log.
