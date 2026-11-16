@@ -709,8 +709,23 @@ IOReturn RealtekCardReaderController::waitForSDCardEventGated(bool inserted, IOS
     
     bool timedOut = false;
     
+#ifdef RTSX_FAULT_INJECTION
+    bool injected = false;
+#endif
+    
     while (!context->done)
     {
+#ifdef RTSX_FAULT_INJECTION
+        // Test only: widen the window between the `done` check and the sleep (boot argument `rtsxsyncdelayms=<ms>`).
+        // A completion that runs in this window without taking the gate wakes nobody, and the wait runs into its deadline.
+        if (!injected)
+        {
+            injected = true;
+            
+            IOSleep(BootArgs::get("rtsxsyncdelayms", 100));
+        }
+#endif
+        
         // `commandSleep()` releases the gate while sleeping and re-acquires it before returning
         IOReturn result = this->commandGate->commandSleep(context, deadline, THREAD_UNINT);
         
@@ -756,12 +771,24 @@ void RealtekCardReaderController::onSDCardEventProcessedSyncCompletion(void* par
     
     auto context = reinterpret_cast<SyncCardEventContext*>(parameter);
     
-    context->status = status;
+    // Publish the result and wake the waiter under the gate: the waiter checks `done` and goes to sleep while holding it,
+    // so the wakeup can no longer fall between its check and its sleep (it would be lost and the waiter would only
+    // return at its deadline, 10 s on sleep / 30 s on wake). The gate is recursive, and the host driver already calls
+    // into the controller through the gate from the thread that runs this completion, so this adds no new lock order.
+    auto action = [&]() -> IOReturn
+    {
+        context->status = status;
+        
+        context->done = true;
+        
+        this->commandGate->commandWakeup(context);
+        
+        return kIOReturnSuccess;
+    };
     
-    context->done = true;
+    IOCommandGateRunAction(this->commandGate, action);
     
-    this->commandGate->commandWakeup(context);
-    
+    // Drop this routine's reference only now: the waiter may free the context as soon as it has woken up
     if (OSDecrementAtomic(&context->refCount) == 1)
     {
         IOFree(context, sizeof(SyncCardEventContext));
