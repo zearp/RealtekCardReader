@@ -709,8 +709,23 @@ IOReturn RealtekCardReaderController::waitForSDCardEventGated(bool inserted, IOS
     
     bool timedOut = false;
     
+#ifdef RTSX_FAULT_INJECTION
+    bool injected = false;
+#endif
+    
     while (!context->done)
     {
+#ifdef RTSX_FAULT_INJECTION
+        // Test only: widen the window between the `done` check and the sleep (boot argument `rtsxsyncdelayms=<ms>`).
+        // A completion that runs in this window without taking the gate wakes nobody, and the wait runs into its deadline.
+        if (!injected)
+        {
+            injected = true;
+            
+            IOSleep(BootArgs::get("rtsxsyncdelayms", 100));
+        }
+#endif
+        
         // `commandSleep()` releases the gate while sleeping and re-acquires it before returning
         IOReturn result = this->commandGate->commandSleep(context, deadline, THREAD_UNINT);
         

@@ -8,6 +8,7 @@
 #include "IOSDCardEventSource.hpp"
 
 #include "Debug.hpp"
+#include "Utilities.hpp"
 
 //
 // MARK: - Meta Class Definitions
@@ -104,6 +105,12 @@ void IOSDCardEventSource::enable(IOSDCard::Completion* completion, IOSDCard::Eve
     
     // Mark the source as enabled while holding the lock; this signals the work loop
     super::enable();
+    
+#ifdef RTSX_FAULT_INJECTION
+    // Test only: widen the window in which the processor work loop could observe the event source
+    // (boot argument `rtsxfaultms=<ms>`). Harmless here because the completion is already stored.
+    IOSleep(BootArgs::get("rtsxfaultms", 100));
+#endif
     
     IOLockUnlock(this->lock);
     
